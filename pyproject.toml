@@ -32,7 +32,14 @@ target-version = "py312"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"         # treat every async test as a coroutine to await; no per-test decorator needed
+# Since the project isn't pip-installed (package = false below), put the repo
+# root on sys.path so `import app...` resolves when running pytest.
+pythonpath = ["."]
 
-[build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+[tool.uv]
+# This is a deployable application, not a library — we never build a wheel of
+# it. `package = false` tells uv to just create a venv with the dependencies
+# and skip trying to build/install the project itself (which was failing
+# because our code lives in `app/`, not a dir matching the project name).
+# We import `app.*` directly and run `uvicorn app.main:app`.
+package = false
