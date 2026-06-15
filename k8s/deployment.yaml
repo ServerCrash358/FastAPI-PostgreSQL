@@ -33,7 +33,7 @@ spec:
     spec:
       containers:
         - name: api
-          image: ghcr.io/OWNER/documents-api:latest   # CI rewrites this whole ref per commit
+          image: ghcr.io/servercrash358/documents-api:8e8ebe48802ec1aabe6dc3eeaabcbf71b16b8699
           ports:
             - containerPort: 8000
           # Config: non-secret env from ConfigMap, secret env from Secret.
