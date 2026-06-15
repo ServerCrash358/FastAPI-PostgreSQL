@@ -9,7 +9,11 @@ on:
     branches: [main]
 
 env:
-  IMAGE: docker.io/nman69/documents-api
+  # Push to GitHub Container Registry (GHCR), not Docker Hub. The owner is
+  # resolved at runtime from the repo, so no username is hardcoded here, and
+  # GHCR authenticates with the built-in GITHUB_TOKEN — no secrets to set up.
+  REGISTRY: ghcr.io
+  IMAGE_NAME: documents-api
 
 jobs:
   # ── JOB 1: test ──────────────────────────────────────────────────────────
@@ -64,17 +68,26 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write                # needed to commit the manifest bump below
+      packages: write                # needed to push the image to GHCR
     steps:
       - uses: actions/checkout@v4
+
+      - name: Resolve image reference
+        # Build the full image path from the repo owner at runtime and force it
+        # lowercase (GHCR rejects uppercase). No username is written in the repo.
+        run: echo "IMAGE=${REGISTRY}/${OWNER,,}/${IMAGE_NAME}" >> "$GITHUB_ENV"
+        env:
+          OWNER: ${{ github.repository_owner }}
 
       - name: Set up Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Log in to Docker Hub
+      - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}   # auto-provided to every workflow
 
       - name: Build & push (tagged with the commit SHA)
         uses: docker/build-push-action@v6
@@ -93,7 +106,7 @@ jobs:
       # change and syncs. CI's job ends at "the desired state is committed".
       - name: Bump image tag in manifest (GitOps)
         run: |
-          sed -i "s|${IMAGE}:.*|${IMAGE}:${{ github.sha }}|" k8s/deployment.yaml
+          sed -i "s|image: .*/${IMAGE_NAME}:.*|image: ${IMAGE}:${{ github.sha }}|" k8s/deployment.yaml
           git config user.email "ci@github.com"
           git config user.name "GitHub Actions"
           git commit -am "ci: deploy ${{ github.sha }}"

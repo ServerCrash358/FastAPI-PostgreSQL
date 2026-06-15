@@ -122,9 +122,9 @@ uv run pytest -v
 ## Deploy to Kubernetes
 
 ```bash
-# Build & push an image (CI does this automatically on push to main):
-docker build -t docker.io/<you>/documents-api:$(git rev-parse --short HEAD) .
-docker push  docker.io/<you>/documents-api:$(git rev-parse --short HEAD)
+# Build & push an image (CI does this automatically on push to main → GHCR):
+docker build -t ghcr.io/<owner>/documents-api:$(git rev-parse --short HEAD) .
+docker push  ghcr.io/<owner>/documents-api:$(git rev-parse --short HEAD)
 
 # Apply directly:
 kubectl apply -k k8s/

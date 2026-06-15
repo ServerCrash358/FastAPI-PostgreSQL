@@ -33,7 +33,7 @@ spec:
     spec:
       containers:
         - name: api
-          image: docker.io/nman69/documents-api:latest   # CI rewrites this tag per commit
+          image: ghcr.io/OWNER/documents-api:latest   # CI rewrites this whole ref per commit
           ports:
             - containerPort: 8000
           # Config: non-secret env from ConfigMap, secret env from Secret.

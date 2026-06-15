@@ -15,7 +15,7 @@ spec:
   project: default
 
   source:
-    repoURL: https://github.com/nman69/fastapi-postgres.git
+    repoURL: https://github.com/OWNER/REPO.git   # set to your repo before applying
     targetRevision: main
     path: k8s                       # the directory ArgoCD watches & applies
 
