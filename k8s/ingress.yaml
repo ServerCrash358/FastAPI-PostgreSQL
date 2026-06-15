@@ -1,0 +1,23 @@
+# Ingress — routes external HTTP traffic to the Service. Needs an ingress
+# controller in the cluster (nginx-ingress, Traefik, or on EKS the AWS LB
+# Controller). On minikube: `minikube addons enable ingress`.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: documents-api
+  namespace: documents
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: documents.local          # add to /etc/hosts → minikube ip, for local testing
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: documents-api
+                port:
+                  number: 80

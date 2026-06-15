@@ -1,0 +1,18 @@
+# Service — a stable virtual IP + DNS name in front of the (ephemeral) pods.
+# Pods come and go; their IPs change. The Service selector tracks pods by label
+# and load-balances across the ones that are READY (readiness probe passing).
+apiVersion: v1
+kind: Service
+metadata:
+  name: documents-api
+  namespace: documents
+  labels:
+    app: documents-api
+spec:
+  type: ClusterIP                 # internal-only; Ingress exposes it externally
+  selector:
+    app: documents-api            # matches the pod label from the Deployment
+  ports:
+    - name: http
+      port: 80                    # cluster-internal port
+      targetPort: 8000            # container port

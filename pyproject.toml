@@ -1,0 +1,38 @@
+[project]
+name = "fastapi-postgres"
+version = "0.1.0"
+description = "Week 2 — Dockerised FastAPI app with async Postgres (documents API)"
+readme = "readme.md"
+requires-python = ">=3.12"
+
+# Runtime dependencies. uv resolves these into a locked uv.lock file.
+dependencies = [
+    "fastapi>=0.115",        # the web framework
+    "uvicorn[standard]>=0.32", # ASGI server; [standard] pulls in uvloop + httptools (faster loop + parser)
+    "asyncpg>=0.30",         # raw async Postgres driver — no ORM, talks the wire protocol directly
+    "pydantic>=2.9",         # request/response validation
+    "pydantic-settings>=2.5", # 12-factor config: load settings from env vars
+    "orjson>=3.10",          # fast JSON serialiser FastAPI can use for responses
+    "redis>=5.1",            # async Redis client for the read-through cache
+    "prometheus-client>=0.21", # exposes /metrics for Prometheus to scrape
+]
+
+[project.optional-dependencies]
+# Installed only in dev/CI (uv sync --all-extras), never in the production image.
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",  # lets pytest run `async def test_...` functions
+    "httpx>=0.27",           # async test client for hitting the app in-process
+    "ruff>=0.7",             # linter + formatter
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"         # treat every async test as a coroutine to await; no per-test decorator needed
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

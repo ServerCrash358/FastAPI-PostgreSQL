@@ -1,0 +1,11 @@
+# Tell Grafana to load any dashboard JSON it finds in /var/lib/grafana/dashboards
+# at startup. We mount our dashboard.json into that folder via docker-compose,
+# so "Documents API — SLO Overview" appears automatically — no manual import.
+apiVersion: 1
+providers:
+  - name: documents-api
+    type: file
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

@@ -1,0 +1,37 @@
+# application.yaml — the ArgoCD Application that closes the GitOps loop.
+#
+# The model (roadmap page 6): Git is the single source of truth for desired
+# state. CI commits a new image tag to k8s/. ArgoCD continuously compares the
+# repo against the live cluster and reconciles any drift. Nobody runs kubectl
+# apply by hand — the cluster converges to whatever the repo says.
+#
+# Apply this ONCE to bootstrap:  kubectl apply -f argocd/application.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: documents-api
+  namespace: argocd
+spec:
+  project: default
+
+  source:
+    repoURL: https://github.com/nman69/fastapi-postgres.git
+    targetRevision: main
+    path: k8s                       # the directory ArgoCD watches & applies
+
+  destination:
+    server: https://kubernetes.default.svc   # the cluster ArgoCD itself runs in
+    namespace: documents
+
+  syncPolicy:
+    automated:
+      prune: true                   # delete cluster objects removed from Git
+      selfHeal: true                # revert manual kubectl changes back to Git state
+    syncOptions:
+      - CreateNamespace=true        # create the `documents` namespace if absent
+    retry:
+      limit: 3
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 1m

@@ -1,0 +1,15 @@
+# kustomization.yaml — lets you apply the whole directory as one unit:
+#   kubectl apply -k k8s/
+# ArgoCD also understands kustomize natively. Listing resources here gives a
+# single, ordered, reviewable inventory of everything that makes up the app.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: documents
+resources:
+  - namespace.yaml
+  - configmap.yaml
+  - secret.yaml
+  - deployment.yaml
+  - service.yaml
+  - hpa.yaml
+  - ingress.yaml

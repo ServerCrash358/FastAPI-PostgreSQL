@@ -1,0 +1,63 @@
+# alerts.yaml — Prometheus alerting rules as a PrometheusRule CRD.
+#
+# This is deliverable ④: "PagerDuty-style notification when error rate > 1%
+# for 5 minutes". The kube-prometheus-stack operator auto-discovers any
+# PrometheusRule with the `release: prometheus` label and loads it.
+#
+# PromQL refresher for the expression below:
+#   rate(metric[5m])  = per-second average increase over the last 5 minutes.
+#   Dividing the 5xx rate by the total rate gives the error *fraction* (0..1).
+#   `> 0.01` is the 1% threshold. `for: 5m` means the condition must hold
+#   continuously for 5 minutes before firing — this suppresses flapping on a
+#   single transient error spike.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: documents-api-alerts
+  namespace: documents
+  labels:
+    release: prometheus            # how kube-prometheus-stack picks this up
+spec:
+  groups:
+    - name: documents-api.slo
+      rules:
+        - alert: HighErrorRate
+          expr: |
+            sum(rate(http_requests_total{status=~"5.."}[5m]))
+            /
+            sum(rate(http_requests_total[5m]))
+            > 0.01
+          for: 5m
+          labels:
+            severity: page          # routed to PagerDuty by Alertmanager
+          annotations:
+            summary: "documents-api 5xx error rate above 1%"
+            description: >-
+              Error rate is {{ $value | humanizePercentage }} over the last 5m
+              (threshold 1%). Check recent deploys and DB/Redis health.
+
+        # A second, faster "burn rate" alert — catches a sudden severe spike
+        # (>10% errors) in just 2 minutes, so a total outage pages immediately
+        # instead of waiting the full 5m window.
+        - alert: CriticalErrorRate
+          expr: |
+            sum(rate(http_requests_total{status=~"5.."}[2m]))
+            /
+            sum(rate(http_requests_total[2m]))
+            > 0.10
+          for: 2m
+          labels:
+            severity: page
+          annotations:
+            summary: "documents-api 5xx error rate above 10% (critical)"
+            description: "Severe error spike: {{ $value | humanizePercentage }}."
+
+        # Reliability signal from kube-state-metrics: pods crash-looping.
+        - alert: PodCrashLooping
+          expr: increase(kube_pod_container_status_restarts_total{namespace="documents"}[15m]) > 3
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "documents-api pod restarting repeatedly"
+            description: "{{ $labels.pod }} restarted >3 times in 15m."

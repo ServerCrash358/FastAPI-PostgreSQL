@@ -1,0 +1,90 @@
+# deployment.yaml — the running app, with full readiness + liveness + startup probes.
+#
+# This is the heart of Week-2-deliverable ①. Compare to the roadmap's page 7
+# manifest, which had only a readinessProbe — here we add all three and explain
+# why each exists.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: documents-api
+  namespace: documents
+  labels:
+    app: documents-api
+spec:
+  replicas: 2                      # two pods → rolling updates have no downtime
+  selector:
+    matchLabels:
+      app: documents-api
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1                  # spin up 1 extra pod before killing an old one
+      maxUnavailable: 0            # never drop below desired count during a deploy
+  template:
+    metadata:
+      labels:
+        app: documents-api
+      annotations:
+        # Tells the Prometheus scraper (deliverable ③/④) to scrape this pod's
+        # /metrics on port 8000. This is the bridge to observability.
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+        - name: api
+          image: docker.io/nman69/documents-api:latest   # CI rewrites this tag per commit
+          ports:
+            - containerPort: 8000
+          # Config: non-secret env from ConfigMap, secret env from Secret.
+          envFrom:
+            - configMapRef:
+                name: documents-config
+            - secretRef:
+                name: documents-secret
+
+          # ── STARTUP PROBE ──────────────────────────────────────────────
+          # Runs FIRST, before liveness/readiness kick in. Gives a slow-booting
+          # app time to come up (pool warm-up, etc.) without liveness killing it.
+          # failureThreshold * periodSeconds = max boot time allowed (30s here).
+          startupProbe:
+            httpGet: { path: /health/live, port: 8000 }
+            periodSeconds: 3
+            failureThreshold: 10
+
+          # ── LIVENESS PROBE ─────────────────────────────────────────────
+          # "Is the process wedged?" Fail → k8s RESTARTS the pod.
+          # Hits /health/live, which deliberately does NOT touch the DB, so a
+          # DB outage can't trigger a restart storm across every pod.
+          livenessProbe:
+            httpGet: { path: /health/live, port: 8000 }
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+
+          # ── READINESS PROBE ────────────────────────────────────────────
+          # "Can this pod serve traffic?" Fail → k8s removes it from the Service
+          # endpoints (no traffic) but does NOT restart it. Hits /health/ready,
+          # which checks Postgres. Pod rejoins rotation automatically on recovery.
+          readinessProbe:
+            httpGet: { path: /health/ready, port: 8000 }
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 3
+
+          # Resource requests/limits drive scheduling + the HPA's CPU math.
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits:   { cpu: 500m, memory: 512Mi }
+
+          # Defence in depth: drop root, no privilege escalation.
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+
+      # Give in-flight requests 30s to drain on pod shutdown. Matches the
+      # graceful-shutdown story from the Dockerfile (uvicorn as PID 1 + SIGTERM).
+      terminationGracePeriodSeconds: 30

@@ -1,0 +1,12 @@
+# Auto-provision the Prometheus datasource on Grafana startup, so you never
+# click through the UI to add it. The uid "prometheus" + isDefault:true is what
+# lets the dashboard's ${DS_PROMETHEUS} variable resolve automatically.
+apiVersion: 1
+datasources:
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090   # "prometheus" = compose service name
+    isDefault: true
+    editable: true

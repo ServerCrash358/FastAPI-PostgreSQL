@@ -1,0 +1,18 @@
+# Non-secret config. Maps 1:1 to the pydantic Settings fields, injected as env
+# vars via envFrom in the Deployment. Change config without rebuilding the image.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: documents-config
+  namespace: documents
+data:
+  APP_NAME: "documents-api"
+  APP_ENV: "production"
+  LOG_LEVEL: "info"
+  POOL_MIN_SIZE: "2"
+  POOL_MAX_SIZE: "10"
+  COMMAND_TIMEOUT: "30"
+  CACHE_TTL_SECONDS: "60"
+  CACHE_ENABLED: "true"
+  # In-cluster service DNS names (assumes postgres + redis run in this namespace).
+  REDIS_URL: "redis://redis:6379/0"

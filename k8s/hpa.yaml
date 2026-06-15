@@ -1,0 +1,30 @@
+# HorizontalPodAutoscaler — scales replicas 2→10 based on CPU.
+# The HPA reads each pod's CPU against the Deployment's resource *requests*
+# (100m). At 70% avg utilisation it adds pods; below, it removes them.
+#
+# This is why resource requests matter: "70% utilisation" is meaningless
+# without a request to be a percentage *of*.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: documents-api-hpa
+  namespace: documents
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: documents-api
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+  behavior:
+    scaleDown:
+      # Wait 5 min of low load before scaling down — avoids flapping (thrashing
+      # pods up and down on bursty traffic).
+      stabilizationWindowSeconds: 300

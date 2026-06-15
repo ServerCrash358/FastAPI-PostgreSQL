@@ -1,0 +1,100 @@
+name: CI/CD
+
+# Trigger on every push to main. PRs run tests only (no deploy) via the
+# job-level `if` guards below.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  IMAGE: docker.io/nman69/documents-api
+
+jobs:
+  # ── JOB 1: test ──────────────────────────────────────────────────────────
+  test:
+    runs-on: ubuntu-latest
+    # Service containers: Postgres + Redis spun up alongside the job so the
+    # integration tests have real backends. This is exactly what conftest.py
+    # expects. They're reachable on localhost because of the port mappings.
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: devuser
+          POSTGRES_PASSWORD: devpass
+          POSTGRES_DB: capstone_dev
+        ports: ["5432:5432"]
+        # Don't start the job's steps until Postgres answers pg_isready.
+        options: >-
+          --health-cmd "pg_isready -U devuser"
+          --health-interval 3s --health-timeout 3s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 3s --health-timeout 3s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://devuser:devpass@localhost:5432/capstone_dev
+      REDIS_URL: redis://localhost:6379/0
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Apply DB schema
+        # Load the migration into the service Postgres before tests run.
+        run: |
+          sudo apt-get update && sudo apt-get install -y postgresql-client
+          psql "$DATABASE_URL" -f migrations/001_init.sql
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Install deps + run tests
+        run: |
+          uv sync --all-extras
+          uv run ruff check app
+          uv run pytest tests/ -v
+
+  # ── JOB 2: build & push image (main only, after tests pass) ──────────────
+  build-and-push:
+    needs: test                      # gate: only runs if `test` succeeded
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write                # needed to commit the manifest bump below
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build & push (tagged with the commit SHA)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          # Immutable tag = the git SHA. Never deploy :latest — you can't tell
+          # which code is running, and rollbacks become guesswork.
+          tags: ${{ env.IMAGE }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # ── GitOps handoff ───────────────────────────────────────────────────
+      # We do NOT run kubectl from CI. Instead we rewrite the image tag in the
+      # manifest and git-commit it. ArgoCD (running in the cluster) notices the
+      # change and syncs. CI's job ends at "the desired state is committed".
+      - name: Bump image tag in manifest (GitOps)
+        run: |
+          sed -i "s|${IMAGE}:.*|${IMAGE}:${{ github.sha }}|" k8s/deployment.yaml
+          git config user.email "ci@github.com"
+          git config user.name "GitHub Actions"
+          git commit -am "ci: deploy ${{ github.sha }}"
+          git push

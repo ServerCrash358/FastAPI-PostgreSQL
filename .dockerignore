@@ -1,0 +1,16 @@
+# Keep the build context small and secrets out of the image.
+# Everything here is excluded from `docker build`'s context upload.
+.git
+.gitignore
+.venv
+__pycache__
+*.pyc
+.pytest_cache
+.ruff_cache
+tests
+.env
+*.md
+k8s
+observability
+argocd
+.github

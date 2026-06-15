@@ -1,0 +1,24 @@
+# prometheus.yml — scrape config for the LOCAL docker-compose stack.
+#
+# In Kubernetes you don't write this: the kube-prometheus-stack operator builds
+# the scrape config from pod annotations (prometheus.io/scrape). This file is
+# only for running Prometheus standalone next to docker-compose.
+global:
+  scrape_interval: 5s          # scrape every 5s so the dashboard feels live
+  evaluation_interval: 5s      # evaluate alert rules every 5s
+
+# Load alerting rules. In k8s this is a PrometheusRule CRD (alerts.yaml);
+# standalone Prometheus needs the classic rule-file format (alerts.local.yml).
+rule_files:
+  - /etc/prometheus/alerts.local.yml
+
+scrape_configs:
+  - job_name: documents-api
+    metrics_path: /metrics
+    static_configs:
+      # "api" is the compose service name; reachable on the shared network.
+      - targets: ["api:8000"]
+
+  - job_name: prometheus     # Prometheus scraping itself (handy sanity check)
+    static_configs:
+      - targets: ["localhost:9090"]

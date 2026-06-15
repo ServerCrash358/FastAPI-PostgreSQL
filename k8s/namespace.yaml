@@ -1,0 +1,8 @@
+# A dedicated namespace isolates this app's objects (RBAC, quotas, network
+# policies all scope to a namespace). Everything else here lives in it.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: documents
+  labels:
+    app.kubernetes.io/part-of: documents-api
