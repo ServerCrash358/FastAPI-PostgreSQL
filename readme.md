@@ -1,32 +1,47 @@
-# Documents API — Week 2 + Weeks 3–4 deliverables
+# Documents API
 
-A Dockerised **FastAPI** service backed by **async Postgres** (asyncpg) and a
-**Redis** read-through cache, then deployed to **Kubernetes** via **GitOps
-(ArgoCD)**, with a CI/CD pipeline, Prometheus metrics, a Grafana SLO dashboard,
-and alerting.
-
-It's deliberately the precursor to the capstone: the `documents` table is the
-capstone's table (roadmap p20) minus the `embedding vector(1536)` column you
-add in Week 5.
+A production-style **FastAPI** service for storing and retrieving documents,
+backed by **async Postgres** (asyncpg) with a **Redis** read-through cache,
+fully instrumented for **Prometheus/Grafana**, and shipped to **Kubernetes**
+via a **GitHub Actions → ArgoCD (GitOps)** pipeline.
 
 ---
 
-## What maps to which roadmap deliverable
+## Features
 
-| # | Roadmap "what to build" | Where it lives |
-|---|---|---|
-| — | Dockerised FastAPI app with async Postgres (Week 2) | `app/`, `Dockerfile`, `docker-compose.yml` |
-| ① | Deploy on k8s with full readiness/liveness probes | `k8s/deployment.yaml` (startup + liveness + readiness) |
-| ② | CI/CD: push → test → build → push image → ArgoCD syncs | `.github/workflows/ci-cd.yaml`, `argocd/application.yaml` |
-| ③ | Grafana dashboard: p50/p95/p99, error rate, cache hit, pod count | `observability/grafana/dashboard.json` |
-| ④ | Alert when error rate > 1% for 5 min | `observability/prometheus/alerts.yaml` |
+- **Async REST API** — full CRUD over a `documents` table (title, content, JSONB metadata).
+- **Connection pooling** — asyncpg pool with a `yield` dependency, so connections are always returned.
+- **Read-through cache** — Redis caches `GET /documents/{id}`; writes invalidate it. Degrades gracefully if Redis is down.
+- **Typed config** — pydantic-settings loads and validates all config from the environment, failing fast at boot.
+- **Health probes** — separate liveness (`/health/live`, no DB) and readiness (`/health/ready`, checks DB) endpoints.
+- **Metrics** — Prometheus middleware records request latency (histogram), request counts, and cache hit/miss counters, with bounded label cardinality.
+- **Containerized** — multi-stage Dockerfile (non-root runtime), one-command local stack via docker-compose.
+- **Kubernetes-ready** — Deployment with startup/liveness/readiness probes, HPA autoscaling, Service, Ingress, ConfigMap/Secret.
+- **CI/CD** — GitHub Actions tests against real Postgres+Redis, builds and pushes a SHA-tagged image, and bumps the manifest for ArgoCD to sync.
+- **Observability** — Grafana SLO dashboard (p50/p95/p99 latency, error rate, cache hit rate, pod count) and Prometheus alert rules (error rate > 1% for 5m).
+
+---
+
+## API
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/documents` | Create a document |
+| `GET` | `/documents/{id}` | Fetch one (cache → DB) |
+| `GET` | `/documents` | List, paginated (`?limit=&offset=`) |
+| `PATCH` | `/documents/{id}` | Partial update (invalidates cache) |
+| `DELETE` | `/documents/{id}` | Delete (invalidates cache) |
+| `GET` | `/health/live` | Liveness — process is up |
+| `GET` | `/health/ready` | Readiness — DB reachable |
+| `GET` | `/metrics` | Prometheus exposition |
+| `GET` | `/docs` | Interactive OpenAPI UI |
 
 ---
 
 ## Architecture
 
 ```
-client → Ingress → Service → Deployment (2–10 pods)
+client → Ingress → Service → Deployment (2–10 pods, HPA)
                                   │  each pod:
                                   │    FastAPI (uvicorn, PID 1)
                                   │      ├── asyncpg pool ──→ Postgres
@@ -34,28 +49,66 @@ client → Ingress → Service → Deployment (2–10 pods)
                                   │      └── /metrics ──→ Prometheus → Grafana + Alertmanager
 ```
 
-Request path for `GET /documents/{id}`:
-`Redis HIT → return` · else `Postgres → fill cache → return`.
+`GET /documents/{id}` path: `Redis HIT → return` · else `Postgres → fill cache → return`.
 
 ---
 
-## Run it locally
+## Project layout
+
+```
+app/                      FastAPI application
+  config.py               pydantic-settings (typed env config)
+  db.py                   asyncpg pool lifecycle + yield dependency
+  cache.py                Redis read-through cache
+  metrics.py              Prometheus metrics + ASGI middleware
+  schemas.py              pydantic request/response models
+  routers/health.py       liveness + readiness
+  routers/documents.py    CRUD
+  main.py                 app composition (lifespan, middleware, routes)
+migrations/001_init.sql   documents table + indexes
+Dockerfile                multi-stage build, non-root runtime
+docker-compose.yml        local stack (api + db + redis [+ observability profile])
+tests/                    pytest suite against real Postgres+Redis
+k8s/                      Deployment, Service, HPA, Ingress, ConfigMap, Secret
+argocd/application.yaml   ArgoCD GitOps app
+.github/workflows/        CI/CD pipeline
+observability/
+  prometheus/             scrape config + alert rules
+  grafana/                SLO dashboard + provisioning
+```
+
+---
+
+## Run locally
 
 ```bash
-# 1. Everything in one command (API + Postgres + Redis):
-docker compose up --build
+# App only (api + db + redis):
+docker compose up --build -d
 
-# 2. Try it:
+# App + Prometheus + Grafana:
+docker compose --profile observability up --build -d
+```
+
+Then:
+
+```bash
 curl localhost:8000/health/ready
 curl -X POST localhost:8000/documents \
   -H 'content-type: application/json' \
-  -d '{"title":"first","content":"hello","metadata":{"week":2}}'
+  -d '{"title":"first","content":"hello","metadata":{"k":"v"}}'
 curl localhost:8000/documents
-open http://localhost:8000/docs        # interactive OpenAPI UI
-curl localhost:8000/metrics            # Prometheus exposition
 ```
 
-Run tests against local infra:
+| Service | URL |
+|---------|-----|
+| API docs | http://localhost:8000/docs |
+| Metrics | http://localhost:8000/metrics |
+| Grafana dashboard | http://localhost:3000/d/documents-api-slo |
+| Prometheus | http://localhost:9090 |
+
+Stop: `docker compose --profile observability down`
+
+### Tests
 
 ```bash
 docker compose up -d db redis
@@ -66,56 +119,47 @@ uv run pytest -v
 
 ---
 
-## Deploy to Kubernetes (minikube → EKS)
+## Deploy to Kubernetes
 
 ```bash
 # Build & push an image (CI does this automatically on push to main):
 docker build -t docker.io/<you>/documents-api:$(git rev-parse --short HEAD) .
 docker push  docker.io/<you>/documents-api:$(git rev-parse --short HEAD)
 
-# Option A — apply directly:
+# Apply directly:
 kubectl apply -k k8s/
 
-# Option B — GitOps (recommended): bootstrap ArgoCD once, then it self-syncs:
+# Or GitOps (recommended): bootstrap ArgoCD once, then it self-syncs:
 kubectl apply -f argocd/application.yaml
 
-# Verify probes & rollout:
+# Verify rollout & probes:
 kubectl -n documents rollout status deploy/documents-api
-kubectl -n documents get pods          # READY 1/1 means readiness probe passed
+kubectl -n documents get pods          # READY 1/1 = readiness probe passed
 ```
 
-### Observability stack
+### Observability on Kubernetes
+
 Assumes `kube-prometheus-stack` (Prometheus + Grafana + Alertmanager) installed
-via Helm. The Deployment's `prometheus.io/scrape` annotations make Prometheus
+via Helm. The Deployment's `prometheus.io/scrape` annotations let Prometheus
 discover the pods; `observability/prometheus/alerts.yaml` (a `PrometheusRule`)
 loads the error-rate alert; import `observability/grafana/dashboard.json` into
 Grafana.
 
 ---
 
-## The teaching notes (how & why)
+## Configuration
 
-- **asyncpg pool, not per-request connections** — opening a PG connection is
-  expensive; the pool amortises it. `db.py` yields a pooled connection per
-  request via a `yield` dependency so it's always returned, even on error.
-- **pydantic-settings** — typed, validated config from env; fails fast at boot.
-- **Liveness ≠ readiness** — liveness (`/health/live`, no DB) → restart;
-  readiness (`/health/ready`, checks DB) → pull from load balancer. Mixing
-  them up causes restart storms. See `k8s/deployment.yaml`.
-- **Multi-stage Dockerfile** — build tooling stays in stage 1; the runtime
-  image ships only the venv + code. Layer ordering (deps before code) makes
-  rebuilds fast.
-- **GitOps** — CI commits the desired image tag; ArgoCD reconciles the cluster.
-  No `kubectl` from CI. SHA tags, never `:latest`.
-- **Prometheus** — `Counter` for counts (rate() them), `Histogram` for latency
-  (histogram_quantile() for p50/p95/p99). Label by route template, not raw path,
-  to bound cardinality.
-- **Alert `for: 5m`** — the condition must hold 5 minutes before firing, so a
-  one-off error blip doesn't page anyone at 3am.
+All config is read from environment variables (see `.env.example`):
 
----
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `DATABASE_URL` | `postgresql://devuser:devpass@localhost:5432/capstone_dev` | asyncpg DSN |
+| `POOL_MIN_SIZE` / `POOL_MAX_SIZE` | `2` / `10` | connection pool bounds |
+| `COMMAND_TIMEOUT` | `30` | per-query timeout (s) |
+| `REDIS_URL` | `redis://localhost:6379/0` | cache connection |
+| `CACHE_TTL_SECONDS` | `60` | cached document freshness |
+| `CACHE_ENABLED` | `true` | bypass cache when `false` |
 
-## Next (Week 5+)
-Add `embedding vector(1536)` + an HNSW index to `documents`, an `/ingest`
-endpoint that embeds content, and a `/query` endpoint doing ANN search +
-cross-encoder rerank → this becomes the capstone RAG API.
+> When running via docker-compose, the `api` container reads config from the
+> compose `environment:` block (hosts are the service names `db`/`redis`), not
+> from `.env`. The `.env` file is for running the app or tests on the host.
